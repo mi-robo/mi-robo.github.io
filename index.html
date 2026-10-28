@@ -288,6 +288,32 @@
   }
   footer { margin-top: 3rem; color: var(--silk-dim); font-size: 0.9rem; }
 
+  /* Tablet */
+  @media (min-width: 640px) {
+    main { max-width: 38rem; padding-top: 3.5rem; }
+  }
+
+  /* Desktop: two columns, intro stays in view */
+  @media (min-width: 960px) {
+    main {
+      max-width: 72rem;
+      padding: 4rem 2.5rem 3rem;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      column-gap: 4.5rem;
+      align-items: start;
+    }
+    .intro { position: sticky; top: 3rem; }
+    .side > h2:first-child { margin-top: 0.3rem; }
+    h1 { font-size: 4.4rem; margin-top: 2.2rem; }
+    .lead { font-size: 1.25rem; }
+    .pads { grid-template-columns: 1fr 1fr; }
+    footer { grid-column: 1 / -1; }
+  }
+  @media (min-width: 960px) and (max-height: 900px) {
+    .intro { position: static; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .eye, .bot .beye, .bot .arm, .profile, .photo.flip, .bubble.swap #line, .screen.booting .eye, .screen.waking .eye { animation: none; }
     .eyes, .eye::after, .pad { transition: none; }
@@ -296,6 +322,7 @@
 </head>
 <body>
 <main>
+  <div class="intro">
   <div class="module">
     <button class="screen" id="screen" type="button" aria-label="Tap to meet Omi">
       <div class="eyes" id="eyes">
@@ -330,7 +357,7 @@
       </div>
       <button class="bubble" id="bubble" type="button" aria-live="polite">
         <span id="line"></span>
-        <span class="hint">Tap for more</span>
+        <span class="hint" id="hint">Tap for more</span>
       </button>
       <button class="back" id="back" type="button">Back to the robot face</button>
     </div>
@@ -341,6 +368,9 @@
   <h1>Mi Robo</h1>
   <p class="lead">Learning EEE and robotics together with you guys. Arduino, ESP32, 3D printing, PCBs and whatever else he can get his hands on.</p>
   <p class="bn">শিখছে, বানাচ্ছে, দেখাচ্ছে।</p>
+  </div>
+
+  <div class="side">
 
   <h2>Find Omi</h2>
   <ul class="pads">
@@ -369,6 +399,8 @@
   </div>
   <a class="more" href="https://github.com/mi-robo/Mi-Robo-Projects" target="_blank" rel="noopener">See every project on GitHub</a>
 
+  </div>
+
   <footer>Mi Robo, Dhaka, Bangladesh</footer>
 </main>
 
@@ -382,6 +414,10 @@
     var back = document.getElementById("back");
     var note = document.getElementById("note");
     var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var verb = window.matchMedia("(hover: hover) and (pointer: fine)").matches ? "Click" : "Tap";
+    document.getElementById("note").textContent = verb + " to meet Omi";
+    document.getElementById("screen").setAttribute("aria-label", verb + " to meet Omi");
+    document.getElementById("hint").textContent = verb + " for more";
 
     var slides = [
       { t: "Meet Omi. He built me.", img: "me.jpg", alt: "Omi smiling in white cat-eye sunglasses and a teal shirt" },
@@ -508,7 +544,7 @@
         screen.classList.add("waking");
         setTimeout(function () { screen.classList.remove("waking"); }, 420);
       }
-      note.textContent = "Tap to meet Omi";
+      note.textContent = verb + " to meet Omi";
       inProfile = false;
       screen.focus({ preventScroll: true });
     }
@@ -533,7 +569,7 @@
     var API = "https://api.github.com/repos/" + OWNER + "/" + REPO + "/contents/";
     var RAW = "https://raw.githubusercontent.com/" + OWNER + "/" + REPO + "/" + BRANCH + "/";
     var KEY = "mirobo-latest-v1";
-    var MAX_AGE = 30 * 60 * 1000;
+    var MAX_AGE = 60 * 60 * 1000;
 
     function dayOf(name) {
       var m = name.match(/day[\s_\-]*(\d+)/i);
@@ -590,10 +626,10 @@
       box.textContent = "";
       box.appendChild(a);
     }
-    function readCache() {
+    function readCache(ignoreAge) {
       try {
         var c = JSON.parse(localStorage.getItem(KEY) || "null");
-        if (c && c.t && Date.now() - c.t < MAX_AGE && c.d) return c.d;
+        if (c && c.d && (ignoreAge || (c.t && Date.now() - c.t < MAX_AGE))) return c.d;
       } catch (e) {}
       return null;
     }
@@ -601,15 +637,44 @@
       try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), d: d })); } catch (e) {}
     }
 
-    var cached = readCache();
+    var cached = readCache(false);
     if (cached) { render(cached); return; }
 
-    fetch(API)
-      .then(function (r) { if (!r.ok) throw new Error("api"); return r.json(); })
+    function foldersFromGitHub() {
+      return fetch(API)
+        .then(function (r) { if (!r.ok) throw new Error("api"); return r.json(); })
+        .then(function (list) {
+          return list
+            .filter(function (i) { return i.type === "dir"; })
+            .map(function (i) { return { name: i.name, url: i.html_url }; });
+        });
+    }
+
+    /* Backup source when GitHub's API says "rate limit exceeded" */
+    function foldersFromCdn() {
+      return fetch("https://data.jsdelivr.com/v1/packages/gh/" + OWNER + "/" + REPO + "@" + BRANCH + "?structure=flat")
+        .then(function (r) { if (!r.ok) throw new Error("cdn"); return r.json(); })
+        .then(function (j) {
+          var seen = {}, out = [];
+          (j.files || []).forEach(function (f) {
+            var parts = f.name.split("/").filter(Boolean);
+            if (parts.length > 1 && !seen[parts[0]]) {
+              seen[parts[0]] = true;
+              out.push({
+                name: parts[0],
+                url: "https://github.com/" + OWNER + "/" + REPO + "/tree/" + BRANCH + "/" + encodeURIComponent(parts[0])
+              });
+            }
+          });
+          return out;
+        });
+    }
+
+    foldersFromGitHub()
+      .catch(foldersFromCdn)
       .then(function (list) {
         var dirs = list
-          .filter(function (i) { return i.type === "dir"; })
-          .map(function (i) { return { name: i.name, url: i.html_url, day: dayOf(i.name) }; })
+          .map(function (i) { return { name: i.name, url: i.url, day: dayOf(i.name) }; })
           .filter(function (d) { return d.day >= 0; });
         if (!dirs.length) throw new Error("none");
         dirs.sort(function (a, b) { return b.day - a.day; });
@@ -629,7 +694,11 @@
             render(d);
           });
       })
-      .catch(function () { /* keep the fallback card */ });
+      .catch(function () {
+        /* Both sources failed: show the last good result if there is one */
+        var old = readCache(true);
+        if (old) render(old);
+      });
   })();
 </script>
 </body>
